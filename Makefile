@@ -3,7 +3,7 @@
 deplist = src/github.com/golang/crypto \
 	src/github.com/Rudd-O/simple-nacl-crypto
 
-objlist = bin/encrypt bin/decrypt
+objlist = bin/nacl-encrypt bin/nacl-decrypt
 
 all: $(objlist)
 
