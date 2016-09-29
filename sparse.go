@@ -4,7 +4,29 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"reflect"
+	"syscall"
 )
+
+var FALLOC_FL_PUNCH_HOLE uint32 = 2
+var FALLOC_FL_KEEP_SIZE uint32 = 1
+var FALLOC_ERASE = FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE
+
+func getFd(f io.Writer) int {
+	st := reflect.ValueOf(f)
+	if st.IsValid() {
+		meth := st.MethodByName("Fd")
+		if meth.IsValid() {
+			rets := meth.Call([]reflect.Value{})
+			if len(rets) == 1 {
+				if rets[0].Kind() == reflect.Uintptr {
+					return int(rets[0].Uint())
+				}
+			}
+		}
+	}
+	return 0
+}
 
 func ToBinary(number int) [8]byte {
 	num := uint64(number)
@@ -142,12 +164,15 @@ type SparseDecoder struct {
 	f               io.WriteSeeker
 	p               uint64
 	unprocessedData []byte
+	fd              int
+	wroteSparse     int64
 }
 
 func NewSparseDecoder(f io.WriteSeeker) *SparseDecoder {
 	return &SparseDecoder{
-		f: f,
-		p: 0,
+		f:  f,
+		p:  0,
+		fd: getFd(f),
 	}
 }
 
@@ -174,7 +199,9 @@ func (e *SparseDecoder) Write(b []byte) (t int, err error) {
 			}
 			if isSparse {
 				// Seek on output file.
-				_, err = e.f.Seek(512*int64(length)-1, 1)
+				byteslen := 512 * int64(length)
+				e.wroteSparse += byteslen
+				_, err = e.f.Seek(byteslen-1, 1)
 				if err != nil {
 					break
 				}
@@ -192,6 +219,19 @@ func (e *SparseDecoder) Write(b []byte) (t int, err error) {
 		e.unprocessedData = e.unprocessedData[n:]
 		if err != nil {
 			break
+		}
+		if e.wroteSparse > 0 && e.fd > 0 {
+			var pos int64
+			pos, err = e.f.Seek(0, 1)
+			if err != nil {
+				break
+			}
+			pos = pos - e.wroteSparse - int64(n)
+			err = syscall.Fallocate(e.fd, FALLOC_ERASE, pos, e.wroteSparse)
+			if err != nil && err != syscall.ENOSYS && err != syscall.EOPNOTSUPP {
+				break
+			}
+			e.wroteSparse = 0
 		}
 		e.p = length
 	}
