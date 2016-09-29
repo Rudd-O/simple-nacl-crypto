@@ -66,7 +66,15 @@ you can use the flag `-b` to specify a size in bytes.
 
 ## Technical data about the file format
 
-The encryption format is very simple:
+The encryption format is very simple and it is engineered to be
+tamper-evident.  If an attacker gains access to an encrypted
+file and modifies it in any way, the decryption process will
+make it evident that the file was modified.  The decryption
+process is also hardened against malicious exploits embedded
+in the encrypted files, such as unbounded memory allocations
+or other types of attacks.
+
+Here is the specification:
 
 * 16 bytes for the header which is simply a random nonce
 * 1 packet composed of two fields
