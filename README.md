@@ -64,14 +64,14 @@ you need to decrypt files that were created with a larger buffer size
 (the command line utility will tell you very loudly it can't do it)
 you can use the flag `-b` to specify a size in bytes.
 
-## Technical data
+## Technical data about the file format
 
 The encryption format is very simple:
 
 * 16 bytes for the header which is simply a random nonce
 * 1 packet composed of two fields
   * 8 bytes for the length of the packet to follow
-  * n bytes for the packet itself
+  * 24 bytes for the packet itself
     * 16 bytes of overhead written
     * 4 bytes with the nacl.Secretbox payload, encrypted
       * 4 bytes that indicate:
