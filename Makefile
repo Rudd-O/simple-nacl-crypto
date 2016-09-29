@@ -3,7 +3,7 @@
 deplist = src/github.com/golang/crypto \
 	src/github.com/Rudd-O/simple-nacl-crypto
 
-objlist = bin/nacl-encrypt bin/nacl-decrypt
+objlist = bin/nacl-crypt
 
 all: $(objlist)
 
@@ -23,3 +23,6 @@ bin/%: deps
 
 fmt:
 	for f in *.go cmd/*/*.go ; do gofmt -w "$$f" || exit 1 ; done
+
+test:
+	GOPATH=$(PWD) go test

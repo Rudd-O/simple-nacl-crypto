@@ -43,18 +43,6 @@ func (s *ShortNonce) GetAndBump(longNonce [16]byte) ([24]byte, error) {
 	return contents, nil
 }
 
-func ToBinary(number int) []byte {
-	num := uint64(number)
-	var data [8]byte
-	binary.BigEndian.PutUint64(data[:], num)
-	return data[:]
-}
-
-func FromBinary(data []byte) int {
-	num := binary.BigEndian.Uint64(data[:])
-	return int(num)
-}
-
 type EncryptedSerializer struct {
 	f           io.Writer
 	key         [32]byte
@@ -89,7 +77,7 @@ func (e *EncryptedSerializer) Write(b []byte) (int, error) {
 	}
 
 	// Write size to output file.
-	n, err := e.f.Write(size)
+	n, err := e.f.Write(size[:])
 	if err != nil {
 		return n, err
 	}
@@ -104,39 +92,39 @@ func (e *EncryptedSerializer) Write(b []byte) (int, error) {
 }
 
 type EncryptedDeserializer struct {
-	f           io.Reader
-	key         [32]byte
-	noncePrefix [16]byte
-	sN          *ShortNonce
-	readHeader  bool
-	buf         []byte
+	f             io.Reader
+	key           [32]byte
+	noncePrefix   [16]byte
+	sN            *ShortNonce
+	readHeader    bool
+	buf           []byte
+	maxAlloc      int
+	decryptionBuf []byte
 }
 
-func NewEncryptedDeserializer(f io.Reader, key [32]byte) *EncryptedDeserializer {
-	return &EncryptedDeserializer{f, key, [16]byte{}, NewShortNonce(), false, []byte{}}
+func NewEncryptedDeserializer(f io.Reader, key [32]byte, maxAlloc int) *EncryptedDeserializer {
+	if maxAlloc == 0 {
+		maxAlloc = 1024 * 1024
+	}
+	return &EncryptedDeserializer{f, key, [16]byte{}, NewShortNonce(), false, []byte{}, maxAlloc, []byte{}}
 }
 
-func (e *EncryptedDeserializer) Read(b []byte) (int, error) {
+func (e *EncryptedDeserializer) Read(b []byte) (t int, err error) {
 	if len(b) == 0 {
 		return 0, io.ErrShortBuffer
 	}
 
 	if !e.readHeader {
 		// Read nonce from the input file now.
-		n, err := e.f.Read(e.noncePrefix[:])
+		n, err := io.ReadFull(e.f, e.noncePrefix[:])
 		if err != nil {
+			if err == io.ErrUnexpectedEOF {
+				return n, ErrCorrupted
+			}
 			return n, err
-		}
-		if n < len(e.noncePrefix) {
-			// The long nonce cannot be read.  This file is zero-sized or too short.
-			// That is bad.
-			return n, ErrCorrupted
 		}
 		e.readHeader = true
 	}
-
-	var t int
-	var err error
 
 	for len(b) > 0 {
 		for len(e.buf) > 0 && len(b) > 0 {
@@ -147,22 +135,31 @@ func (e *EncryptedDeserializer) Read(b []byte) (int, error) {
 		}
 
 		if len(b) > 0 && len(e.buf) == 0 {
-			// Allocate buffer.  This will not be allocated on every loop.
-			var buf [1048576 + secretbox.Overhead]byte
-
-			// Read and parse header from input file.
-			n, err := e.f.Read(buf[:8])
+			var sparseBuf [8]byte
+			// Read and parse length from input file.
+			n, err := io.ReadFull(e.f, sparseBuf[:])
 			if err != nil {
+				if err == io.ErrUnexpectedEOF {
+					return t, ErrCorrupted
+				}
 				return t, err
 			}
-			packetsize := FromBinary(buf[:8])
-			if packetsize > len(buf) || packetsize < 1 {
-				return t, ErrCorrupted
+			packetsize := FromBinary(sparseBuf)
+			if packetsize > e.maxAlloc+secretbox.Overhead || packetsize < 1 {
+				return t, fmt.Errorf("encrypted packet is too large to be decrypted: %d > %d", packetsize, e.maxAlloc)
+			}
+
+			// Allocate buffer.  This will not be allocated on every loop.
+			if cap(e.decryptionBuf) < packetsize {
+				e.decryptionBuf = make([]byte, packetsize)
 			}
 
 			// Read data from input file.
-			n, err = e.f.Read(buf[:packetsize])
+			n, err = io.ReadFull(e.f, e.decryptionBuf[:packetsize])
 			if err != nil {
+				if err == io.ErrUnexpectedEOF {
+					err = ErrCorrupted
+				}
 				break
 			}
 
@@ -173,7 +170,7 @@ func (e *EncryptedDeserializer) Read(b []byte) (int, error) {
 			}
 
 			// Open from secretbox.
-			payload, ok := secretbox.Open(nil, buf[:n], &currentN, &e.key)
+			payload, ok := secretbox.Open(nil, e.decryptionBuf[:n], &currentN, &e.key)
 			if !ok {
 				return t, ErrBadKey
 			}
