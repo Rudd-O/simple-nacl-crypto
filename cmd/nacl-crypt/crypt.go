@@ -12,19 +12,18 @@ import (
 )
 
 var sparse bool
-var bufsize = 0
+var bufsize int
 
 func init() {
 	flag.BoolVar(&sparse, "s", false, "encrypt the file using an encoding that compresses blocks of zeroes")
-	flag.IntVar(&bufsize, "b", 0, "use maximum buffer of this many bytes (default: unbuffered)")
+	flag.IntVar(&bufsize, "b", 1048576, "changes the buffer size in bytes, which (during encryption) leads to different output packet lengths and (during decryption) allows you to limit how much memory the decoder can allocate (default: unbuffered)")
 }
 
 func usage(s string) {
 	if len(s) > 0 {
 		s = fmt.Sprintf("error: %s\n", s)
 	}
-	postfix := "-s denotes whether to store the file in a sparse format"
-	log.Fatalf("%susage: nacl-crypt <enc | dec> [-s] <infile> <outfile> <key>\n%s\n", s, postfix)
+	log.Fatalf("%susage: nacl-crypt <enc | dec> [-s] <infile> <outfile> <key>\n", s)
 }
 
 func main() {
@@ -32,6 +31,9 @@ func main() {
 	args := flag.Args()
 	if len(args) < 4 {
 		usage("not enough arguments")
+	}
+	if bufsize < 64 {
+		usage("the buffer size specified with -b cannot be less than 64 bytes")
 	}
 
 	mode := args[0]
